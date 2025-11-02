@@ -7,13 +7,9 @@
 #include <mpi.h>
 
 // external files
-#include "embedding_matrix.h"
+# include "model.h"
 
-int backward() {
-    return 0;
-}
-
-int main() {
+void backward(Model *mo, int ids[], int next_id) {
     // seed
     srand(time(NULL));
 
@@ -32,7 +28,6 @@ int main() {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
 
-    int next_id = 12;
     double* local_p = malloc((V/comm_sz) * sizeof(double));
     double* local_gradient_Ly = malloc((V/comm_sz) * sizeof(double));
     double* gradient_La = malloc(h * sizeof(double));
@@ -41,12 +36,8 @@ int main() {
     double* local_gradient_Lo = malloc(h * sizeof(double));
     double* local_U = embedding_matrix(V / comm_sz, h);
     double* local_b = malloc((V/comm_sz) * sizeof(double));
-    double* H = embedding_matrix(h, n*m); // weights first layer
-    double* d = malloc(h * sizeof(double)); // bias first layer
-    double* C = embedding_matrix(V, m);
     double* x_flat = malloc(n * m * sizeof(double));
     double* a = malloc(h * sizeof(double));
-    int ids[] = {23, 34};
 
     // perform backward gradient for output units in i-th block
     for (int i = 0; i < h; i++) {
@@ -86,10 +77,10 @@ int main() {
     }
 
     for (int k = 0; k < h; k++) {
-        d[k] += lr * local_gradient_Lo[k];
+        mo->d[k] += lr * local_gradient_Lo[k];
 
         for (int i = 0; i < m*n; i++) {
-            H[k * m*n + i] += lr * local_gradient_Lo[k] * x_flat[i];
+            mo->H[k * m*n + i] += lr * local_gradient_Lo[k] * x_flat[i];
         }
     }
 
@@ -98,7 +89,7 @@ int main() {
         int word_id = ids[k]; 
 
         for (int j = 0; j < m; j++) {
-            C[word_id * m + j] += lr * gradient_Lx[k * m + j];
+            mo->C[word_id * m + j] += lr * gradient_Lx[k * m + j];
         }
     }
 
@@ -106,4 +97,5 @@ int main() {
 
     return 0;
 }
+
 

@@ -15,3 +15,10 @@
         -L/opt/homebrew/opt/openblas/lib \
         -o backward_phase src/backward_phase.c src/embedding_matrix.c -lopenblas -lm
 - allgather or simply gather to CPU:0?
+- mpicc -I./src -I/opt/homebrew/opt/openblas/include \
+    -L/opt/homebrew/opt/openblas/lib \
+    -o train src/*.c -lopenblas -lm
+
+- more outputs from a function 
+- if i call mpicc on train he sould have MPI init and finalize and in forward and backward no?
+- CPU:0 must done first part of of forward pahse and last of backward rihgt?
