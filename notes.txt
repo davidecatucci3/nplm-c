@@ -19,6 +19,5 @@
     -L/opt/homebrew/opt/openblas/lib \
     -o train src/*.c -lopenblas -lm
 
-- more outputs from a function 
-- if i call mpicc on train he sould have MPI init and finalize and in forward and backward no?
-- CPU:0 must done first part of of forward pahse and last of backward rihgt?
+- vocab
+- tokenizer
