@@ -3,49 +3,90 @@
 #include <string.h>
 #include <time.h>
 
-#define MAX_LINE 4096
-#define MAX_TOKENS 512
+// Dynamic vocabulary structure
+typedef struct {
+    char *chars;   // dynamically allocated array of unique chars
+    int size;      // number of unique characters
+    int capacity;  // allocated capacity
+} Vocab;
 
-// Dummy token → ID mapping (replace with your real tokenizer)
-int token_to_id(const char *token) {
-    int id = 0;
-    for (int i = 0; token[i]; i++)
-        id += token[i];
-    return id % 1000; // simple hash
-}
-
-// Helper: split string by delimiter
-int split_tokens(char *str, char *delim, char *tokens[], int max_tokens) {
-    int count = 0;
-    char *tok = strtok(str, delim);
-    while (tok != NULL && count < max_tokens) {
-        tokens[count++] = tok;
-        tok = strtok(NULL, delim);
+// Initialize vocab
+void init_vocab(Vocab *vocab) {
+    vocab->size = 0;
+    vocab->capacity = 16;
+    vocab->chars = (char *)malloc(vocab->capacity * sizeof(char));
+    if (!vocab->chars) {
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(1);
     }
-    return count;
 }
 
-// get_data() → returns pointer to static int[2] with token IDs
-int* get_data() {
-    static int ids[3];  // static so we can return pointer safely
+// Add new character to vocab if not already present
+int add_char(Vocab *vocab, char c) {
+    // check if already exists
+    for (int i = 0; i < vocab->size; i++) {
+        if (vocab->chars[i] == c)
+            return i; // already exists
+    }
 
-    FILE *fp = fopen("data/brown.csv", "r");
-    
+    // grow array if needed
+    if (vocab->size >= vocab->capacity) {
+        vocab->capacity *= 2;
+        vocab->chars = (char *)realloc(vocab->chars, vocab->capacity * sizeof(char));
+        if (!vocab->chars) {
+            fprintf(stderr, "Realloc failed\n");
+            exit(1);
+        }
+    }
+
+    vocab->chars[vocab->size] = c;
+    return vocab->size++;
+}
+
+// Get character ID (returns -1 if not found)
+int char_to_id(Vocab *vocab, char c) {
+    for (int i = 0; i < vocab->size; i++)
+        if (vocab->chars[i] == c)
+            return i;
+    return -1;
+}
+
+// Build vocabulary dynamically by reading the whole file
+void build_vocab(const char *filename, Vocab *vocab) {
+    FILE *fp = fopen(filename, "r");
     if (!fp) {
         perror("Error opening file");
-        ids[0] = ids[1] = -1;
+        exit(1);
+    }
+
+    char c;
+    while ((c = fgetc(fp)) != EOF) {
+        add_char(vocab, c);
+    }
+
+    fclose(fp);
+}
+
+// Example get_data() returning a few character IDs
+int* get_data(Vocab *vocab) {
+    static int ids[3];
+
+    FILE *fp = fopen("data/brown.csv", "r");
+    if (!fp) {
+        perror("Error opening file");
+        ids[0] = ids[1] = ids[2] = -1;
         return ids;
     }
 
-    // Count lines to pick a random one
+    // Read a random line
     int line_count = 0;
-    char line[MAX_LINE];
+    char line[4096];
     while (fgets(line, sizeof(line), fp))
         line_count++;
 
-    if (line_count <= 1) { // header only
+    if (line_count <= 1) {
         fclose(fp);
-        ids[0] = ids[1] = -1;
+        ids[0] = ids[1] = ids[2] = -1;
         return ids;
     }
 
@@ -61,35 +102,13 @@ int* get_data() {
 
     line[strcspn(line, "\r\n")] = 0;
 
-    // Split CSV line (simple version, no quoted commas)
-    char *fields[8];
-    int n = split_tokens(line, ",", fields, 8);
-    if (n < 7) {
-        ids[0] = ids[1] = -1;
+    if (strlen(line) < 3) {
+        ids[0] = ids[1] = ids[2] = -1;
         return ids;
     }
 
-    char *tokenized_text = fields[4];
-    char temp_text[MAX_LINE];
-    strncpy(temp_text, tokenized_text, sizeof(temp_text));
-    temp_text[sizeof(temp_text)-1] = '\0';
-
-    // Tokenize by spaces
-    char *tokens[MAX_TOKENS];
-    int num_tokens = split_tokens(temp_text, " ", tokens, MAX_TOKENS);
-
-    if (num_tokens < 2) {
-        ids[0] = ids[1] = -1;
-        
-        return ids;
-    }
-
-    // Pick random 2-token chunk
-    int start = rand() % (num_tokens - 1);
-
-    ids[0] = token_to_id(tokens[start]);
-    ids[1] = token_to_id(tokens[start + 1]);
-    ids[2] =  token_to_id(tokens[start + 2]);
-
+    ids[0] = char_to_id(vocab, line[0]);
+    ids[1] = char_to_id(vocab, line[1]);
+    ids[2] = char_to_id(vocab, line[2]);
     return ids;
 }

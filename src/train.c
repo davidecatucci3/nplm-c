@@ -24,6 +24,12 @@ int main() {
     int h = 32;
     int n = 2;
 
+    // vocabulary
+    Vocab vocab;
+
+    init_vocab(&vocab);
+    build_vocab("data/brown.csv", &vocab);
+
     // parameters
     double* C = embedding_matrix(V, m);
     double* H = embedding_matrix(h, n*m);
@@ -31,13 +37,10 @@ int main() {
     double* U = embedding_matrix(V, h);
     double* b = embedding_matrix(V, 1);
 
-    // vocabulary
-    int* vocab = malloc(V * sizeof(int));
-
     for (int epoch = 0; epoch < epochs; epoch++) {
         // FORWARD PHASE
         // perform forward computation for the word features layer
-        int* ids_full = get_data();
+        int* ids_full = get_data(&vocab);
         int ids[2] = {ids_full[0], ids_full[1]};
         int next_id = ids_full[2];
         double* x_flat = malloc(n * m * sizeof(double)); //input vector neural network that has been flattened 
@@ -137,7 +140,7 @@ int main() {
 
         if (rank == 0) {
             for (int i = 0; i < V; i++) {
-                double li = log(p[vocab[i]]); // loss of wi
+                double li = log(p[i]); // loss of wi
                 
                 L += li;
             }
