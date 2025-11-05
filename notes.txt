@@ -19,5 +19,6 @@
     -L/opt/homebrew/opt/openblas/lib \
     -o train src/*.c -lopenblas -lm
 
-- vocab
-- tokenizer
+    mpirun -n 8 ./train 
+    
+

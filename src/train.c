@@ -14,21 +14,23 @@
 int main() {
     MPI_Init(NULL, NULL);
 
-    // seed
-    srand(time(NULL));
+    int rank, comm_sz;
 
-    // hyperparameters
-    int epochs = 50;
-    int V = 512;
-    int m = 64;
-    int h = 32;
-    int n = 2;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
 
     // vocabulary
     Vocab vocab;
 
     init_vocab(&vocab);
     build_vocab("data/brown.csv", &vocab);
+
+    // hyperparameters
+    int epochs = 500;
+    int V = vocab.size;
+    int m = 64;
+    int h = 32;
+    int n = 2;
 
     // parameters
     double* C = embedding_matrix(V, m);
@@ -38,11 +40,15 @@ int main() {
     double* b = embedding_matrix(V, 1);
 
     for (int epoch = 0; epoch < epochs; epoch++) {
+        // seed
+        srand(time(NULL) + epoch);
+
         // FORWARD PHASE
         // perform forward computation for the word features layer
         int* ids_full = get_data(&vocab);
         int ids[2] = {ids_full[0], ids_full[1]};
         int next_id = ids_full[2];
+        
         double* x_flat = malloc(n * m * sizeof(double)); //input vector neural network that has been flattened 
 
         for (int i = 0; i < n; i++) {
@@ -72,13 +78,8 @@ int main() {
         }
 
         // perform forward computation for output units in the i-th block
-        int rank, comm_sz;
-
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
-
-        double S = 0;
-        double local_s = 0;
+        double S = 0.0;
+        double local_s = 0.0;
         double* local_U = malloc((V/comm_sz) * h * sizeof(double)); // weights second layer
         double* local_b = malloc((V/comm_sz) * sizeof(double)); // bias second layer
         double* local_y = malloc((V/comm_sz) * sizeof(double)); // output second layer (logits)
@@ -118,12 +119,23 @@ int main() {
             local_y, 1               
         );
 
-        for (int i = 0; i < V/comm_sz; i++) {
-            local_y[i] = local_y[i] + local_b[i];
-            local_p[i] = exp(local_y[i]);
-                
-            local_s += local_p[i];
-        } 
+        double local_max = local_y[0];
+
+        for (int i = 1; i < V/comm_sz; ++i) {
+            if (local_y[i] > local_max) local_max = local_y[i];
+        }
+
+        double global_max = 0.0;
+
+        MPI_Allreduce(&local_max, &global_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+        for (int i = 0; i < V/comm_sz; ++i) {
+            double ex = exp(local_y[i] - global_max);
+
+            local_p[i] = ex;
+
+            local_s += ex;
+        }
 
         // compute and share S among the processors
         MPI_Allreduce(&local_s, &S, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -136,18 +148,10 @@ int main() {
         MPI_Allgather(local_p, V/comm_sz, MPI_DOUBLE, p, V/comm_sz, MPI_DOUBLE, MPI_COMM_WORLD);
         
         // compute loss
-        double L = 0; // total loss
-
         if (rank == 0) {
-            for (int i = 0; i < V; i++) {
-                double li = log(p[i]); // loss of wi
-                
-                L += li;
-            }
+            double L = log(p[next_id] + 1e-12);
 
-            L = L / V;
-
-            printf("Epoch: %d | Loss: %lf \n", epoch, L);
+            printf("Epoch %d | Loss: %.6f\n", epoch, L);
         }
         
         // BACKWARD PHASE 
@@ -156,15 +160,11 @@ int main() {
         double* gradient_Lx = malloc(n * m * sizeof(double));
         double* local_gradient_La = malloc(h * sizeof(double));
         double* local_gradient_Lo = malloc(h * sizeof(double));
-        double lr = 0.01;
+        double lr = 0.001;
 
         // perform backward gradient for output units in i-th block
         for (int i = 0; i < h; i++) {
-            local_gradient_La[i] = 0;
-        }
-
-        for (int i = 0; i < n*m; i++) {
-            gradient_Lx[i] = 0;
+            local_gradient_La[i] = 0.0;
         }
 
         for (int i = 0; i < V / comm_sz; i++) {
@@ -177,11 +177,9 @@ int main() {
             local_b[i] += lr*local_gradient_Ly[i];
 
             for (int j = 0; j < h; j++) {            
-                local_gradient_La[j] += lr * local_gradient_Ly[i * h + j];
-            }
-
-            for (int j = 0; j < h; j++) {            
-                local_U[i * h + j] += lr * local_gradient_Ly[i * h + j];
+                local_gradient_La[j] += local_gradient_Ly[i] * local_U[i*h + j];
+        
+                local_U[i * h + j] += lr * local_gradient_Ly[i] * o[j];
             }
         }
         
@@ -191,6 +189,10 @@ int main() {
         // backpropagate through and update hidden layer weights
         for (int k = 0; k < h; k++) {
             local_gradient_Lo[k] = (1.0 - o[k] * o[k]) * gradient_La[k];
+        }
+
+        for (int i = 0; i < n*m; ++i) {
+            gradient_Lx[i] = 0.0;
         }
         
         for (int i = 0; i < m*n; i++) {
@@ -215,19 +217,11 @@ int main() {
                 C[word_id * m + j] += lr * gradient_Lx[k * m + j];
             }
         }
-        
-        free(x_flat);
-        free(o);
-        free(local_U);
-        free(local_b);
-        free(local_y);
-        free(local_p);
-        free(p);
+
         free(local_gradient_Ly);
-        free(gradient_La);
-        free(gradient_Lx);
         free(local_gradient_La);
         free(local_gradient_Lo);
+        free(gradient_La);
     }
     
     MPI_Finalize();
