@@ -22,3 +22,6 @@
     mpirun -n 8 ./train 
     
 
+- in paper singlwe words 46000 i have 6000 something strange
+- seed see
+- do rela stocharic gradinet descnet with batches training
