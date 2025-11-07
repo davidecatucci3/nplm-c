@@ -12,14 +12,15 @@
 #include "get_data.h"
 
 int main() {
+    // initialize MPI and set rank and comm_sz
     MPI_Init(NULL, NULL);
 
     int rank, comm_sz;
 
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);      // process id 
+    MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);   // total number of processes
 
-    // vocabulary
+    // create vocabulary
     Vocab vocab;
 
     init_vocab(&vocab);
@@ -28,34 +29,41 @@ int main() {
     // hyperparameters
     int epochs = 500;
     int V = vocab.size;
-    int m = 64;
-    int h = 32;
-    int n = 2;
+    int m = 64;              // embedding size
+    int h = 32;              // hidde layer units
+    int n = 2;               // input elements
+    double lr = 1e-3;        // start learning rate
+    double r = 1e-8;         // decreasor rate
+    double wd = 1e-4;        // weight decay
 
     // parameters
-    double* C = embedding_matrix(V, m);
-    double* H = embedding_matrix(h, n*m);
-    double* d = embedding_matrix(h, 1);
-    double* U = embedding_matrix(V, h);
-    double* b = embedding_matrix(V, 1);
+    double* C = embedding_matrix(V, m);       // embedding weights
+    double* H = embedding_matrix(h, n*m);     // weights first layer
+    double* d = embedding_matrix(h, 1);       // bias first layer
+    double* U = embedding_matrix(V, h);       // weights second layer
+    double* b = embedding_matrix(V, 1);       // bias second layer
 
+    // other valriables
+    long long t = 0;
+
+    // traininig loop
     for (int epoch = 0; epoch < epochs; epoch++) {
         // seed
         srand(time(NULL) + epoch);
 
         // FORWARD PHASE
         // perform forward computation for the word features layer
-        int* ids_full = get_data(&vocab);
-        int ids[2] = {ids_full[0], ids_full[1]};
-        int next_id = ids_full[2];
-        
-        double* x_flat = malloc(n * m * sizeof(double)); //input vector neural network that has been flattened 
+        int x1, x2, y;
+        get_chunk(&x1, &x2, &y);        
+        int ids[2] = {x1, x2}; 
+        int next_id =y;
+        double* x = malloc(n * m * sizeof(double)); //input vector neural network (flattened)
 
         for (int i = 0; i < n; i++) {
             int id = ids[i];
             
             for (int j = 0; j < m; j++) {
-                x_flat[i * m + j] = C[id * m + j];  
+                x[i * m + j] = C[id * m + j];  
             }
         }
 
@@ -68,7 +76,7 @@ int main() {
             h, n*m,
             1.0,
             H, n*m,           
-            x_flat, 1,         
+            x, 1,         
             0.0,
             o, 1               
         );
@@ -85,6 +93,9 @@ int main() {
         double* local_y = malloc((V/comm_sz) * sizeof(double)); // output second layer (logits)
         double* local_p = malloc((V/comm_sz) * sizeof(double)); // output second layer (probs)
         double* p = malloc(V * sizeof(double));
+        double local_max = local_y[0];
+        double global_max = 0.0;
+        
 
         for (int i = 0; i < V / comm_sz; i++) {
             for (int j = 0; j < h; j++) {
@@ -119,13 +130,9 @@ int main() {
             local_y, 1               
         );
 
-        double local_max = local_y[0];
-
-        for (int i = 1; i < V/comm_sz; ++i) {
+        for (int i = 1; i < V / comm_sz; ++i) {
             if (local_y[i] > local_max) local_max = local_y[i];
         }
-
-        double global_max = 0.0;
 
         MPI_Allreduce(&local_max, &global_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 
@@ -146,12 +153,12 @@ int main() {
         }
 
         MPI_Allgather(local_p, V/comm_sz, MPI_DOUBLE, p, V/comm_sz, MPI_DOUBLE, MPI_COMM_WORLD);
-        
+
         // compute loss
         if (rank == 0) {
             double L = log(p[next_id] + 1e-12);
 
-            printf("Epoch %d | Loss: %.6f\n", epoch, L);
+            printf("Epoch %d | Loss=%.2f | lr=%.6f \n", epoch, L, lr);
         }
         
         // BACKWARD PHASE 
@@ -160,8 +167,7 @@ int main() {
         double* gradient_Lx = malloc(n * m * sizeof(double));
         double* local_gradient_La = malloc(h * sizeof(double));
         double* local_gradient_Lo = malloc(h * sizeof(double));
-        double lr = 0.001;
-
+        
         // perform backward gradient for output units in i-th block
         for (int i = 0; i < h; i++) {
             local_gradient_La[i] = 0.0;
@@ -205,12 +211,12 @@ int main() {
             d[k] += lr * local_gradient_Lo[k];
 
             for (int i = 0; i < m*n; i++) {
-                H[k * m*n + i] += lr * local_gradient_Lo[k] * x_flat[i];
+                H[k * m*n + i] += lr * local_gradient_Lo[k] * x[i];
             }
         }
         
-        // update word feature vectors for the input words: loop over k between 1 and n - 1
-        for (int k = 0; k < n - 1; k++) {
+        // update word feature vectors for the input words: loop over k between 1 and n
+        for (int k = 0; k < n; k++) {
             int word_id = ids[k]; 
 
             for (int j = 0; j < m; j++) {
@@ -218,6 +224,15 @@ int main() {
             }
         }
 
+        // weight decay regularization
+        for (int i = 0; i < V*m; ++i) C[i] *= (1.0 - lr * wd);
+        for (int i = 0; i < h*n*m; ++i) H[i] *= (1.0 - lr * wd);
+        for (int i = 0; i < (V/comm_sz)*h; ++i) local_U[i] *= (1.0 - lr * wd);
+
+        t++;
+        
+        lr = lr / (1.0 + r * t);
+           
         free(local_gradient_Ly);
         free(local_gradient_La);
         free(local_gradient_Lo);

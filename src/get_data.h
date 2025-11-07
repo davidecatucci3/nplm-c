@@ -9,6 +9,6 @@ typedef struct {
 
 void init_vocab(Vocab *vocab);
 void build_vocab(const char *filename, Vocab *vocab);
-int* get_data(Vocab *vocab);
+void get_chunk(int *x1, int *x2, int *y);
 
 #endif
