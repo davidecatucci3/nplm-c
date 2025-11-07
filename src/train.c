@@ -28,7 +28,7 @@ int main() {
 
     // hyperparameters
     int epochs = 500;
-    int V = vocab.size;      // 6402
+    int V = 6408;            // vocab.size is 6402 but to use 8 cores and be divisible i need 6408
     int m = 64;              // embedding size
     int h = 32;              // hidde layer units
     int n = 2;               // input elements
@@ -91,6 +91,8 @@ int main() {
         double local_loss_sum = 0.0;
 
         reset_get_chunk();
+        
+        double start_time = MPI_Wtime();
 
         while (1) {
             // FORWARD PHASE
@@ -254,15 +256,17 @@ int main() {
         MPI_Reduce(&local_loss_sum, &global_loss_sum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
         MPI_Reduce(&local_count, &global_count, 1, MPI_LONG_LONG_INT, MPI_SUM, 0, MPI_COMM_WORLD);
 
+        double end_time = MPI_Wtime();
+        double epoch_time = end_time - start_time;
+
         if (rank == 0) {
             double avg_nll = (global_count > 0) ? (global_loss_sum / (double)global_count) : 0.0;
 
-            printf("Epoch %d | Avg loss = %.6f | lr = %.6e (examples=%lld)\n",
-                   epoch, avg_nll, lr, (long long)global_count);
+            printf("Epoch %d | Avg loss = %.6f | lr = %.6e | time = %.3f \n", epoch, avg_nll, lr, epoch_time);
         }
     }
 
-    // free everything
+    // free up memory
     free(C); free(H); free(d); free(U); free(b);
     free(local_U); free(local_b); free(local_y); free(local_p); free(p);
     free(local_gradient_Ly); free(gradient_La); free(gradient_Lx);
@@ -272,3 +276,9 @@ int main() {
 
     return 0;
 }
+
+// T_serial(n) = 1.3
+// T_parallel(n, 8) = 2.5
+// T_parallel(n, 1) = 1.4
+// Sp(n, 8) = 1.3 / 2.5 = 0.52
+// Sc(n, 8) = 1.4 / 2.5 = 0.5

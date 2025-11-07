@@ -28,6 +28,4 @@ mpicc -I./src -I/opt/homebrew/opt/openblas/include \
     mpirun -n 6 ./train 
         
 
-- in paper singlwe words 46000 i have 6000 something strange
-- seed see
-- do rela stocharic gradinet descnet with batches training
+- how to make MPI work
