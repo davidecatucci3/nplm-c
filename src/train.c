@@ -21,12 +21,6 @@ int main() {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);      // process id       // process id 
     MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);   // total number of processes   // total number of processes
 
-    // create create vocabulary
-    Vocab vocab;
-
-    init_vocab(&vocab);
-    build_vocab("data/brown.csv", &vocab);
-
     // hyperparameters
     int epochs = 500;
     int V = vocab.size;
@@ -36,24 +30,8 @@ int main() {
     double lr = 1e-3;        // start learning rate
     double r = 1e-8;         // decreasor rate
     double wd = 1e-4;        // weight decay
-    int m = 64;              // embedding size
-    int h = 32;              // hidde layer units
-    int n = 2;               // input elements
-    double lr = 1e-3;        // start learning rate
-    double r = 1e-8;         // decreasor rate
-    double wd = 1e-4;        // weight decay
 
     // parameters
-    double* C = embedding_matrix(V, m);       // embedding weights
-    double* H = embedding_matrix(h, n*m);     // weights first layer
-    double* d = embedding_matrix(h, 1);       // bias first layer
-    double* U = embedding_matrix(V, h);       // weights second layer
-    double* b = embedding_matrix(V, 1);       // bias second layer
-
-    // other valriables
-    long long t = 0;
-
-    // traininig loop
     double* C = embedding_matrix(V, m);       // embedding weights
     double* H = embedding_matrix(h, n*m);     // weights first layer
     double* d = embedding_matrix(h, 1);       // bias first layer
@@ -74,10 +52,6 @@ int main() {
         get_chunk(&x1, &x2, &y);        
         int ids[2] = {x1, x2}; 
         int next_id =y;
-        double* x = malloc(n * m * sizeof(double)); //input vector neural network (flattened)
-        int* ids = get_data(&vocab);          
-        int inpu_ids[2] = {ids[0], ids[1]}; 
-        int next_id = ids[2];
         double* x = malloc(n * m * sizeof(double)); //input vector neural network (flattened)
 
         for (int i = 0; i < n; i++) {
@@ -118,10 +92,6 @@ int main() {
         double* p = malloc(V * sizeof(double));
         double local_max = local_y[0];
         double global_max = 0.0;
-        
-        double local_max = local_y[0];
-        double global_max = 0.0;
-        
 
         for (int i = 0; i < V / comm_sz; i++) {
             for (int j = 0; j < h; j++) {
@@ -157,7 +127,6 @@ int main() {
         );
 
         for (int i = 1; i < V / comm_sz; ++i) {
-        for (int i = 1; i < V / comm_sz; ++i) {
             if (local_y[i] > local_max) local_max = local_y[i];
         }
 
@@ -186,7 +155,6 @@ int main() {
         if (rank == 0) {
             double L = log(p[next_id] + 1e-12);
 
-            printf("Epoch %d | Loss=%.2f | lr=%.6f \n", epoch, L, lr);
             printf("Epoch %d | Loss=%.2f | lr=%.6f \n", epoch, L, lr);
         }
         
@@ -249,7 +217,8 @@ int main() {
         // update word feature vectors for the input words: loop over k between 1 and n
         for (int k = 0; k < n; k++) {
             int word_id = ids[k]; 
-        // update word feature vectors for the input words: loop over k between 1 and n
+        }
+
         for (int k = 0; k < n; k++) {
             int word_id = inpu_ids[k]; 
 
@@ -257,16 +226,6 @@ int main() {
                 C[word_id * m + j] += lr * gradient_Lx[k * m + j];
             }
         }
-
-        // weight decay regularization
-        for (int i = 0; i < V*m; ++i) C[i] *= (1.0 - lr * wd);
-        for (int i = 0; i < h*n*m; ++i) H[i] *= (1.0 - lr * wd);
-        for (int i = 0; i < (V/comm_sz)*h; ++i) local_U[i] *= (1.0 - lr * wd);
-
-        t++;
-        
-        lr = lr / (1.0 + r * t);
-           
 
         // weight decay regularization
         for (int i = 0; i < V*m; ++i) C[i] *= (1.0 - lr * wd);
