@@ -12,6 +12,33 @@ typedef struct {
     int capacity;   // allocated capacity
 } Vocab;
 
+void get_chunk(int *x1, int *x2, int *y) {
+    static FILE *fp = NULL;    // keeps file open between calls
+    static int eof_reached = 0;
+
+    if (eof_reached) {         // if we reached the end, return failure
+        *x1 = *x2 = *y = -1;
+        return;
+    }
+
+    if (fp == NULL) {          // open file on first call
+        fp = fopen("train_ids.txt", "r");
+        if (!fp) {
+            perror("fopen");
+            *x1 = *x2 = *y = -1;
+            return;
+        }
+    }
+
+    // Read the next line
+    if (fscanf(fp, "%d %d %d", x1, x2, y) != 3) {
+        *x1 = *x2 = *y = -1;   // indicate failure
+        eof_reached = 1;       // mark end of file
+        fclose(fp);
+        fp = NULL;
+    }
+}
+
 // ---------------- Helper Functions ----------------
 
 // Initialize vocab
