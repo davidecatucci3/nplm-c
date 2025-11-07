@@ -6,36 +6,48 @@
 
 // ---------------- Vocabulary Structure ----------------
 
+static FILE *fp = NULL;
+static int eof_reached = 0;
+
 typedef struct {
     char **words;   // dynamically allocated array of unique words
     int size;       // number of unique words
     int capacity;   // allocated capacity
 } Vocab;
 
-void get_chunk(int *x1, int *x2, int *y) {
-    static FILE *fp = NULL;    // keeps file open between calls
-    static int eof_reached = 0;
+void reset_get_chunk(void) {
+    if (fp) {
+        fclose(fp);
+        fp = NULL;
+    }
+    eof_reached = 0;
+}
 
-    if (eof_reached) {         // if we reached the end, return failure
+void get_chunk(int *x1, int *x2, int *y) {
+    if (eof_reached) {
         *x1 = *x2 = *y = -1;
         return;
     }
 
-    if (fp == NULL) {          // open file on first call
+    if (fp == NULL) {
         fp = fopen("train_ids.txt", "r");
         if (!fp) {
             perror("fopen");
             *x1 = *x2 = *y = -1;
+            eof_reached = 1;
             return;
         }
     }
 
-    // Read the next line
-    if (fscanf(fp, "%d %d %d", x1, x2, y) != 3) {
-        *x1 = *x2 = *y = -1;   // indicate failure
-        eof_reached = 1;       // mark end of file
+    // Skip blank lines and check EOF explicitly
+    int items = fscanf(fp, "%d %d %d", x1, x2, y);
+
+    if (items != 3) {
+        *x1 = *x2 = *y = -1;
+        eof_reached = 1;
         fclose(fp);
         fp = NULL;
+        return;
     }
 }
 
