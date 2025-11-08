@@ -54,34 +54,23 @@ int main() {
     double* U = embedding_matrix(V, h);       // weights second layer
     double* b = embedding_matrix(V, 1);       // bias second layer
 
-    double* local_U = malloc((V/comm_sz) * h * sizeof(double));     // weights second layer
-    double* local_b = malloc((V/comm_sz) * sizeof(double));         // bias second layer
     double* local_y = malloc((V/comm_sz) * sizeof(double));         // output second layer (logits)
     double* local_p = malloc((V/comm_sz) * sizeof(double));         // output second layer (probs)
-    double* p = malloc(V * sizeof(double));
-
+    
     double* local_gradient_Ly = malloc((V/comm_sz) * sizeof(double));
     double* gradient_La = malloc(h * sizeof(double));
     double* gradient_Lx = malloc(n * m * sizeof(double));
     double* local_gradient_La = malloc(h * sizeof(double));
     double* local_gradient_Lo = malloc(h * sizeof(double));
 
+    double* o = malloc(h * sizeof(double)); // output vector first layer
+    double* x = malloc(n * m * sizeof(double)); //input vector neural network (flattened)
+
     // other valriables
     long long t = 0;
 
     // seed
     srand(time(NULL) + rank);
-
-    // initialize local_U and local_b once (parameter-parallel: each rank owns a chunk)
-    for (int r = 0; r < block; ++r) {
-        int global_row = rank * block + r;
-
-        local_b[r] = b[global_row];
-
-        for (int c = 0; c < h; ++c) {
-            local_U[r * h + c] = U[global_row * h + c];
-        }
-    }
 
     // traininig loop
     for (int epoch = 0; epoch < epochs; epoch++) {
@@ -104,7 +93,6 @@ int main() {
 
             int ids[2] = {x1, x2}; 
             int next_id = y;
-            double* x = malloc(n * m * sizeof(double)); //input vector neural network (flattened)
 
             for (int i = 0; i < n; i++) {
                 int id = ids[i];
@@ -115,8 +103,6 @@ int main() {
             }
 
             // perform forward computation for the hidden layer
-            double* o = malloc(h * sizeof(double)); // output vector first layer
-
             cblas_dgemv( // BLAS faster matrix mul
                 CblasRowMajor,    
                 CblasNoTrans,    
@@ -135,6 +121,8 @@ int main() {
             // perform forward computation for output units in the i-th block
             double S = 0.0;
             double local_s = 0.0;
+            double* local_U = U + rank * block * h; 
+            double* local_b = b + rank * block;
 
             cblas_dgemv( // BLAS faster matrix mul
                 CblasRowMajor,     
@@ -157,11 +145,9 @@ int main() {
             MPI_Allreduce(&local_max, &global_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 
             for (int i = 0; i < V/comm_sz; ++i) {
-                double ex = exp(local_y[i] - global_max);
+                local_p[i] = exp(local_y[i] - global_max);
 
-                local_p[i] = ex;
-
-                local_s += ex;
+                local_s += local_p[i];
             }
 
             // compute and share S among the processors
@@ -172,12 +158,38 @@ int main() {
                 local_p[i] /= S;
             }
 
-            MPI_Allgather(local_p, V/comm_sz, MPI_DOUBLE, p, V/comm_sz, MPI_DOUBLE, MPI_COMM_WORLD);
-
             // compute loss
-            // BACKWARD PHASE    p[(int i ];
-           ad_ubat[ig_= 1 - localt_Ly[i] = -local_p[i];
-    }
+            int local_start = rank * block;
+            int local_end = local_start + block;
+
+            // double prob_target = p[next_id];
+            double prob_target = 0.0;
+
+            if (next_id >= local_start && next_id < local_end) {
+                int local_index = next_id - local_start;
+
+                prob_target = local_p[local_index];
+            }
+
+            MPI_Allreduce(MPI_IN_PLACE, &prob_target, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
+            double nll = log(prob_target + 1e-12);
+
+            local_loss_sum += nll;
+            local_count += 1;
+            
+            // BACKWARD PHASE         
+            // perform backward gradient for output units in i-th block
+            for (int i = 0; i < h; i++) {
+                local_gradient_La[i] = 0.0;
+            }
+
+            for (int i = 0; i < V / comm_sz; i++) {
+                if (i + rank*(V/comm_sz) == next_id) {
+                    local_gradient_Ly[i] = 1 - local_p[i];
+                } else {
+                    local_gradient_Ly[i] = -local_p[i];
+                }
 
                 local_b[i] += lr*local_gradient_Ly[i];
 
@@ -234,7 +246,7 @@ int main() {
             lr = lr / (1.0 + r * t);
         }
 
-        // data ata each epoch
+        // data at each epoch
         double global_loss_sum = 0.0;
         long long global_count = 0;
 
@@ -253,7 +265,7 @@ int main() {
 
     // free up memory
     free(C); free(H); free(d); free(U); free(b);
-    free(local_U); free(local_b); free(local_y); free(local_p); free(p);
+    free(local_y);
     free(local_gradient_Ly); free(gradient_La); free(gradient_Lx);
     free(local_gradient_La); free(local_gradient_Lo);
     
@@ -263,7 +275,8 @@ int main() {
 }
 
 // T_serial(n) = 1.3
-// T_parallel(n, 8) = 2.5
+// T_parallel(n, 8) = 2.1
 // T_parallel(n, 1) = 1.4
-// Sp(n, 8) = 1.3 / 2.5 = 0.52
-// Sc(n, 8) = 1.4 / 2.5 = 0.5
+// Sp(n, 8) = 1.3 / 2.1 = 0.61
+// Sc(n, 8) = 1.4 / 2.1 = 0.67
+// worts case

@@ -28,4 +28,4 @@ mpicc -I./src -I/opt/homebrew/opt/openblas/include \
     mpirun -n 6 ./train 
         
 
-- how to make MPI work
+- add batch
