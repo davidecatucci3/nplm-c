@@ -1,31 +1,11 @@
 - faster matmul using BLAS then 4 loops: for m and n <= 10/20 4 loops are faster for 40/50 >= BLAS but check better
-- mpicc -I./src -o forward_phase src/*.c -lm
-- gcc -I./src -o forward_phase src/*.c -lm
-- gcc -I./src -I/opt/homebrew/opt/openblas/include \
-    -L/opt/homebrew/opt/openblas/lib \
-    -o forward_phase src/*.c -lopenblas -lm
-- mpicc -I./src -I/opt/homebrew/opt/openblas/include \
-    -L/opt/homebrew/opt/openblas/lib \
-    -o forward_phase src/*.c -lopenblas -lm
-- mpicc -I./src -I/opt/homebrew/opt/openblas/include \
-    -L/opt/homebrew/opt/openblas/lib \
-    -o forward_phase src/forward_phase.c src/embedding_matrix.c -lopenblas -lm
 
-    mpicc -I./src -I/opt/homebrew/opt/openblas/include \
-        -L/opt/homebrew/opt/openblas/lib \
-        -o backward_phase src/backward_phase.c src/embedding_matrix.c -lopenblas -lm
-- allgather or simply gather to CPU:0?
 - mpicc -I./src -I/opt/homebrew/opt/openblas/include \
     -L/opt/homebrew/opt/openblas/lib \
     -o train src/*.c -lopenblas -lm
 
     mpirun -n 8 ./train 
 
-mpicc -I./src -I/opt/homebrew/opt/openblas/include \
-    -L/opt/homebrew/opt/openblas/lib \
-    -o train src/*.c -lopenblas -lm
-
-    mpirun -n 6 ./train 
-        
-
-- add batch
+- this scode in not scalable 
+- not a lot of cores means faster traning for example on V=16000 and h=512 is better 4 cores then 8 because with parmters paralell there is a lot of communicaoont among process 
+- write amdhal lawa and otehrs stuff and in report copy some parts from paper and link report in github

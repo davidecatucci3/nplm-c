@@ -11,7 +11,7 @@ double randn_one() {
     return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
 }
 
-// generate an array of size m with N(0,1) samples
+// generate an array of size m with N(0, 1) samples
 void randn(double *out, int m) {
     for (int i = 0; i < m; i++) {
         out[i] = randn_one();

@@ -30,7 +30,7 @@ void get_chunk(int *x1, int *x2, int *y) {
     }
 
     if (fp == NULL) {
-        fp = fopen("train_ids.txt", "r");
+        fp = fopen("data/train_ids.txt", "r");
         if (!fp) {
             perror("fopen");
             *x1 = *x2 = *y = -1;
