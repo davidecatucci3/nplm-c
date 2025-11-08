@@ -175,24 +175,9 @@ int main() {
             MPI_Allgather(local_p, V/comm_sz, MPI_DOUBLE, p, V/comm_sz, MPI_DOUBLE, MPI_COMM_WORLD);
 
             // compute loss
-            double prob_target = p[next_id];
-            double nll = log(prob_target + 1e-12);
-
-            local_loss_sum += nll;
-            local_count += 1;
-            
-            // BACKWARD PHASE         
-            // perform backward gradient for output units in i-th block
-            for (int i = 0; i < h; i++) {
-                local_gradient_La[i] = 0.0;
-            }
-
-            for (int i = 0; i < V / comm_sz; i++) {
-                if (i + rank*(V/comm_sz) == next_id) {
-                    local_gradient_Ly[i] = 1 - local_p[i];
-                } else {
-                    local_gradient_Ly[i] = -local_p[i];
-                }
+            // BACKWARD PHASE    p[(int i ];
+           ad_ubat[ig_= 1 - localt_Ly[i] = -local_p[i];
+    }
 
                 local_b[i] += lr*local_gradient_Ly[i];
 
