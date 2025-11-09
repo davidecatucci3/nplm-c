@@ -33,6 +33,7 @@ int main() {
     int epochs = 500;     
     int V = 6408;         // vocab.size is 6402 but to use 8 cores and be divisible I need 6408
     int m = 64;           // embedding size
+    int B = 64;           // batch size
     int h = 32;           // hidde layer units
     int n = 2;            // input size
     double lr = 1e-3;     // start learning rate
@@ -73,9 +74,9 @@ int main() {
 
     // traininig loop
     for (int epoch = 0; epoch < epochs; epoch++) {
-        int x1, x2, y;                   // two inputs (x1 and x2) and a third value to predict (y)                 
-        long long local_count = 0;       // count samples (chunks) of data elaborated
-        double local_loss_sum = 0.0;     // loss for each sample
+        int x1, x2, y;             // two inputs (x1 and x2) and a third value to predict (y)                 
+        int count = 0;             // count samples (chunks) elaborated
+        double loss_sum = 0.0;     // sum loss for each sample
         
         reset_get_chunk();
         
@@ -94,7 +95,7 @@ int main() {
             MPI_Bcast(&y,  1, MPI_INT, 0, MPI_COMM_WORLD);
             
             if (x1 == -1) break;                // end of file
-            if (local_count == 1000) break;     // break
+            if (count == 1000) break;     // break
 
             int ids[2] = {x1, x2};
             int next_id = y;
@@ -140,7 +141,6 @@ int main() {
                 local_y, 1               
             );
 
-
             for (int i = 0; i < block_size; i++) {
                 local_y[i] += local_b[i];
             }
@@ -181,13 +181,13 @@ int main() {
 
                 prob_target = local_p[local_index];
             }
-
+            
             MPI_Allreduce(MPI_IN_PLACE, &prob_target, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
             double nll = log(prob_target + 1e-12); // negative log-likelihood
 
-            local_loss_sum += nll;
-            local_count += 1;
+            loss_sum += nll;
+            count += 1;
             
             // BACKWARD PHASE         
             // perform backward gradient for output units in i-th block
@@ -195,6 +195,10 @@ int main() {
                 local_gradient_La[i] = 0.0;
             }
 
+            for (int i = 0; i < n*m; ++i) {
+                gradient_Lx[i] = 0.0;
+            }
+            
             for (int i = 0; i < block_size; i++) {
                 if (i + rank*(V/comm_sz) == next_id) {
                     local_gradient_Ly[i] = 1 - local_p[i];
@@ -219,10 +223,6 @@ int main() {
                 local_gradient_Lo[k] = (1.0 - o[k] * o[k]) * gradient_La[k];
             }
 
-            for (int i = 0; i < n*m; ++i) {
-                gradient_Lx[i] = 0.0;
-            }
-            
             for (int i = 0; i < m*n; i++) {
                 for (int k = 0; k < h; k++) {
                     gradient_Lx[i] += H[k * m*n + i] * local_gradient_Lo[k];
@@ -250,29 +250,26 @@ int main() {
             for (int i = 0; i < V*m; ++i) C[i] *= (1.0 - lr * wd);
             for (int i = 0; i < h*n*m; ++i) H[i] *= (1.0 - lr * wd);
             for (int i = 0; i < block_size*h; ++i) local_U[i] *= (1.0 - lr * wd);
-
-            t += 1.0;
             
             lr = lr / (1.0 + r * t);
         }
 
-        // global loss calculation
-        double global_loss_sum = 0.0;     // loss over all samples
-        long long global_count = 0;       // count over all samples
+        t += 1.0;
 
-        MPI_Reduce(&local_loss_sum, &global_loss_sum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-        MPI_Reduce(&local_count, &global_count, 1, MPI_LONG_LONG_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-
-        MPI_Reduce(&local_loss_sum, &global_loss_sum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        // important at each epoch
 
         double end_time = MPI_Wtime();  // end timer to calculate time spent for one epoch
         double epoch_time = end_time - start_time;
-        
-        // important at each epoch
+    
         if (rank == 0) {
-            double avg_nll = (global_count > 0) ? (global_loss_sum / (double) global_count) : 0.0;
+            double avg_nll = (loss_sum / count); // avergae loss among all samples
 
-            printf("Epoch %d | Avg loss = %.6f | lr = %.6e | time = %.3f \n", epoch, avg_nll, lr, epoch_time);
+            printf("Epoch %d | train loss = %.6f | lr = %.6e | dt = %.3f \n", epoch, avg_nll, lr, epoch_time);
+        } 
+
+        // each 10 epochs test
+        if (epoch % 10 == 0) {
+
         }
     }
 

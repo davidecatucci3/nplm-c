@@ -6,6 +6,9 @@
 
     mpirun -n 8 ./train 
 
+- IMLPEMENT BATCH
+- IMPLEMENET TEST each x epochs
+
 - this scode in not scalable 
 - not a lot of cores means faster traning for example on V=16000 and h=512 is better 4 cores then 8 because with parmters paralell there is a lot of communicaoont among process 
 - write amdhal lawa and otehrs stuff and in report copy some parts from paper and link report in github
