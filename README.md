@@ -19,7 +19,7 @@ I created this project for **two main reasons**.
 
 First, out of **interest in the research**: I wanted to implement this paper because it was one of the first to explore language modeling using modern neural networks—a topic that genuinely fascinated me.  
 
-Second, as a **university project requirement**: My university required me to complete a project and implement it using MPI and CUDA, so I thought this would be a good one
+Second, as a **university project requirement**: My university required me to complete a project and implement it using MPI, OpenMP and CUDA, so I thought this would be a good one
   
 If you want to learn more, **read the official paper**: 📄 [A Neural Probabilistic Language Model (Bengio et al., 2003)](https://www.jmlr.org/papers/volume3/bengio03a/bengio03a.pdf)
 
