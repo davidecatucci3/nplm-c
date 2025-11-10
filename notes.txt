@@ -27,3 +27,9 @@ TO DO:
 - feature vectors: x
 
 9 block of code -> 3 parallelizlbe so 9 / 3 = 3 -> 33.3% of code is parallelizible
+
+NOTES:
+- CBLAS works better if large matrix so check
+- batch size reuqired otherwise this program is not scalable because works better with 4 then 8 and i 
+  i increment size paramters is worst with more prpcees due to large communciation betwee nproceedss (by all reduce) at each sample,
+  4 each sample looop, with batch size = 64, 4 each 64 sample loop

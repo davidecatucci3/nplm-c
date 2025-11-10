@@ -31,8 +31,8 @@ int main() {
     build_vocab("data/brown.csv", &vocab);
 
     // hyperparameters
-    int epochs = 500;     
-    int B = 64;           // batch size
+    int epochs = 500;   
+    int B = 64;           // batch size  
     int V = 6408;         // vocab.size is 6402 but to use 8 cores and be divisible I need 6408
     int m = 64;           // embedding size
     int h = 32;           // hidde layer units
@@ -74,202 +74,171 @@ int main() {
     double t = 0; // used for learning rate decay
 
     // traininig loop
-    for (int epoch = 0; epoch < epochs; epoch++) {               
+    for (int epoch = 0; epoch < epochs; epoch++) {
+        int x1, x2, y;             // two inputs (x1 and x2) and a third value to predict (y)                 
         int count = 0;             // count samples (chunks) elaborated
         double loss_sum = 0.0;     // sum loss for each sample
         
-        // allocate batch gradients
-        double* gradient_La_batch = calloc(h, sizeof(double));
-        double* gradient_Lx_batch = calloc(n*m, sizeof(double));
-        double* local_U_batch = calloc(block_size * h, sizeof(double));
-        double* local_b_batch = calloc(block_size, sizeof(double));
-
         reset_get_chunk();
         
         double start_time = MPI_Wtime(); // start timer to calculate time spent for one epoch
-
+ 
         while (1) {
-            int samples_in_batch = 0;
-            double batch_loss = 0.0;
+            // get train sample of data
+            get_chunk("data/train_ids.txt", &x1, &x2, &y);
 
-            // reset batch gradients
-            memset(gradient_La_batch, 0, h*sizeof(double));
-            memset(gradient_Lx_batch, 0, n*m*sizeof(double));
-            memset(local_U_batch, 0, block_size*h*sizeof(double));
-            memset(local_b_batch, 0, block_size*sizeof(double));
+            //if (x1 == -1) break;        // all samples in train data per epoch
+            if (count == 1000) break;     // 1000 samples per epoch
 
-            for (int b = 0; b < B; b++) {
-                int x1, x2, y; // two inputs (x1 and x2) and a third value to predict (y) 
+            int ids[2] = {x1, x2};
+            int next_id = y;
 
-                // get train sample of data
-                get_chunk("data/train_ids.txt", &x1, &x2, &y);
-
-                //if (x1 == -1) break;        // all samples in train data per epoch
-                if (count == 1000) break;     // 1000 samples per epoch
-
-                int ids[2] = {x1, x2};
-                int next_id = y;
-
-                // FORWARD PHASE
-                // perform forward computation for the word features layer  
-                for (int i = 0; i < n; i++) {
-                    int id = ids[i];
-                    
-                    for (int j = 0; j < m; j++) {
-                        x[i * m + j] = C[id * m + j];  
-                    }
-                }
+            // FORWARD PHASE
+            // perform forward computation for the word features layer  
+            for (int i = 0; i < n; i++) {
+                int id = ids[i];
                 
-                // perform forward computation for the hidden layer
-                cblas_dgemv( // BLAS faster matrix mul
-                    CblasRowMajor,    
-                    CblasNoTrans,    
-                    h, n*m,
-                    1.0,
-                    H, n*m,                    
-                    x, 1,         
-                    0.0,
-                    o, 1               
-                );
-
-                for (int i = 0; i < h; i++) {
-                    o[i] = tanh(o[i] + d[i]);
+                for (int j = 0; j < m; j++) {
+                    x[i * m + j] = C[id * m + j];  
                 }
+            }
+            
+            // perform forward computation for the hidden layer
+            cblas_dgemv( // BLAS faster matrix mul
+                CblasRowMajor,    
+                CblasNoTrans,    
+                h, n*m,
+                1.0,
+                H, n*m,                    
+                x, 1,         
+                0.0,
+                o, 1               
+            );
 
-                // perform forward computation for output units in the i-th block
-                double S = 0.0;                                  // total sum of exponential for softmax
-                double local_s = 0.0;                            // local exponential for softmax
-                double* local_U = U + rank * block_size * h;     // take a block of U for parallelize it over all ranks
-                double* local_b = b + rank * block_size;         // take a block of b for parallelize it over all ranks
-
-                cblas_dgemv( // BLAS faster matrix mul
-                    CblasRowMajor,     
-                    CblasNoTrans,      
-                    block_size, h,
-                    1.0,
-                    local_U, h,           
-                    o, 1,         
-                    0.0,
-                    local_y, 1               
-                );
-
-                for (int i = 0; i < block_size; i++) {
-                    local_y[i] += local_b[i];
-                }
-
-                // softmax stability 
-                double local_max = -INFINITY;
-                double global_max = 0.0;
-
-                for (int i = 0; i < block_size; ++i) {
-                    if (local_y[i] > local_max) {
-                        local_max = local_y[i];
-                    }
-                }
-
-                MPI_Allreduce(&local_max, &global_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-
-                for (int i = 0; i < block_size; ++i) {
-                    local_p[i] = exp(local_y[i] - global_max);
-
-                    local_s += local_p[i];
-                }
-
-                // compute and share S among the processors
-                MPI_Allreduce(&local_s, &S, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-                
-                // normalize the probabilities
-                for (int i = 0; i < block_size; i++) {
-                    local_p[i] /= S;
-                }
-
-                // update log-likelihood, if wt falls in the block of CPU i > 0, then CPU i sends pwt to CPU 0. CPU 0 computes L = log(pwt) and keeps track of the total log-likelihood
-                int local_start = rank * block_size;
-                int local_end = local_start + block_size;
-                double prob_target = 0.0;
-
-                if (next_id >= local_start && next_id < local_end) {
-                    int local_index = next_id - local_start;
-
-                    prob_target = local_p[local_index];
-                }
-                
-                MPI_Allreduce(MPI_IN_PLACE, &prob_target, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-                
-                double ll = log(prob_target + 1e-12); // log-likelihood
-
-                batch_loss += ll;
-
-                // BACKWARD PHASE         
-                // perform backward gradient for output units in i-th block
-                for (int i = 0; i < h; i++) {
-                    local_gradient_La[i] = 0.0;
-                }
-
-                for (int i = 0; i < n*m; ++i) {
-                    gradient_Lx[i] = 0.0;
-                }
-                
-                for (int i = 0; i < block_size; i++) {
-                    if (i + rank*(V/comm_sz) == next_id) {
-                        local_gradient_Ly[i] = 1 - local_p[i];
-                    } else {
-                        local_gradient_Ly[i] = -local_p[i];
-                    }
-
-                    local_b[i] += lr*local_gradient_Ly[i];
-
-                    for (int j = 0; j < h; j++) {            
-                        local_gradient_La[j] += local_gradient_Ly[i] * local_U[i*h + j];
-                
-                        local_U[i * h + j] += lr * local_gradient_Ly[i] * o[j];
-                    }
-                }
-                
-                // share dL/da among all processors
-                MPI_Allreduce(local_gradient_La, gradient_La, h, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-                
-                // backpropagate through and update hidden layer weights
-                for (int k = 0; k < h; k++) {
-                    local_gradient_Lo[k] = (1.0 - o[k] * o[k]) * gradient_La[k];
-                }
-
-                for (int i = 0; i < m*n; i++) {
-                    for (int k = 0; k < h; k++) {
-                        gradient_Lx[i] += H[k * m*n + i] * local_gradient_Lo[k];
-                    }
-                }
-
-                for (int k = 0; k < h; k++) {
-                    d[k] += lr * local_gradient_Lo[k];
-
-                    for (int i = 0; i < m*n; i++) {
-                        H[k * m*n + i] += lr * local_gradient_Lo[k] * x[i];
-                    }
-                }
-                
-                // update word feature vectors for the input words: loop over k between 1 and n
-                for (int k = 0; k < n; k++) {
-                    int word_id = ids[k]; 
-
-                    for (int j = 0; j < m; j++) {
-                        C[word_id * m + j] += lr * gradient_Lx[k * m + j];
-                    }
-                }
-
-                samples_in_batch++;
-                count++;
+            for (int i = 0; i < h; i++) {
+                o[i] = tanh(o[i] + d[i]);
             }
 
-            loss_sum += batch_loss;
+            // perform forward computation for output units in the i-th block
+            double S = 0.0;                                  // total sum of exponential for softmax
+            double local_s = 0.0;                            // local exponential for softmax
+            double* local_U = U + rank * block_size * h;     // take a block of U for parallelize it over all ranks
+            double* local_b = b + rank * block_size;         // take a block of b for parallelize it over all ranks
 
-            // update output layer weights after batch
-            for (int i = 0; i < block_size*h; i++) {
-                U[rank*block_size*h + i] += lr * local_U_batch[i];
-            } 
+            cblas_dgemv( // BLAS faster matrix mul
+                CblasRowMajor,     
+                CblasNoTrans,      
+                block_size, h,
+                1.0,
+                local_U, h,           
+                o, 1,         
+                0.0,
+                local_y, 1               
+            );
 
             for (int i = 0; i < block_size; i++) {
-                b[rank*block_size + i] += lr * local_b_batch[i];
+                local_y[i] += local_b[i];
+            }
+
+            // softmax stability 
+            double local_max = -INFINITY;
+            double global_max = 0.0;
+
+            for (int i = 0; i < block_size; ++i) {
+                if (local_y[i] > local_max) {
+                    local_max = local_y[i];
+                }
+            }
+
+            MPI_Allreduce(&local_max, &global_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+            for (int i = 0; i < block_size; ++i) {
+                local_p[i] = exp(local_y[i] - global_max);
+
+                local_s += local_p[i];
+            }
+
+            // compute and share S among the processors
+            MPI_Allreduce(&local_s, &S, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            
+            // normalize the probabilities
+            for (int i = 0; i < block_size; i++) {
+                local_p[i] /= S;
+            }
+
+            // update log-likelihood, if wt falls in the block of CPU i > 0, then CPU i sends pwt to CPU 0. CPU 0 computes L = log(pwt) and keeps track of the total log-likelihood
+            int local_start = rank * block_size;
+            int local_end = local_start + block_size;
+            double prob_target = 0.0;
+
+            if (next_id >= local_start && next_id < local_end) {
+                int local_index = next_id - local_start;
+
+                prob_target = local_p[local_index];
+            }
+            
+            MPI_Allreduce(MPI_IN_PLACE, &prob_target, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            
+            double ll = log(prob_target + 1e-12); // log-likelihood
+
+            loss_sum += ll;
+            count += 1;
+            
+            // BACKWARD PHASE         
+            // perform backward gradient for output units in i-th block
+            for (int i = 0; i < h; i++) {
+                local_gradient_La[i] = 0.0;
+            }
+
+            for (int i = 0; i < n*m; ++i) {
+                gradient_Lx[i] = 0.0;
+            }
+            
+            for (int i = 0; i < block_size; i++) {
+                if (i + rank*(V/comm_sz) == next_id) {
+                    local_gradient_Ly[i] = 1 - local_p[i];
+                } else {
+                    local_gradient_Ly[i] = -local_p[i];
+                }
+
+                local_b[i] += lr*local_gradient_Ly[i];
+
+                for (int j = 0; j < h; j++) {            
+                    local_gradient_La[j] += local_gradient_Ly[i] * local_U[i*h + j];
+            
+                    local_U[i * h + j] += lr * local_gradient_Ly[i] * o[j];
+                }
+            }
+            
+            // share dL/da among all processors
+            MPI_Allreduce(local_gradient_La, gradient_La, h, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            
+            // backpropagate through and update hidden layer weights
+            for (int k = 0; k < h; k++) {
+                local_gradient_Lo[k] = (1.0 - o[k] * o[k]) * gradient_La[k];
+            }
+
+            for (int i = 0; i < m*n; i++) {
+                for (int k = 0; k < h; k++) {
+                    gradient_Lx[i] += H[k * m*n + i] * local_gradient_Lo[k];
+                }
+            }
+
+            for (int k = 0; k < h; k++) {
+                d[k] += lr * local_gradient_Lo[k];
+
+                for (int i = 0; i < m*n; i++) {
+                    H[k * m*n + i] += lr * local_gradient_Lo[k] * x[i];
+                }
+            }
+            
+            // update word feature vectors for the input words: loop over k between 1 and n
+            for (int k = 0; k < n; k++) {
+                int word_id = ids[k]; 
+
+                for (int j = 0; j < m; j++) {
+                    C[word_id * m + j] += lr * gradient_Lx[k * m + j];
+                }
             }
 
             // weight decay regularization
@@ -422,12 +391,6 @@ int main() {
         if (epoch % 50 == 0) {
             generate_tokens(rank, 30, n, m, h, V, &vocab, C, H, d, U, b);
         }
-
-        // free memory
-        free(gradient_La_batch);
-        free(gradient_Lx_batch);
-        free(local_U_batch);
-        free(local_b_batch);
     }
 
     // free memory
