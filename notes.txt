@@ -1,14 +1,30 @@
-- faster matmul using BLAS then 4 loops: for m and n <= 10/20 4 loops are faster for 40/50 >= BLAS but check better
-
-- mpicc -I./src -I/opt/homebrew/opt/openblas/include \
+- MPI: mpicc -I./src -I/opt/homebrew/opt/openblas/include \
     -L/opt/homebrew/opt/openblas/lib \
     -o train src/*.c -lopenblas -lm
 
     mpirun -n 8 ./train 
+- NO MPI: gcc -I./src -I/opt/homebrew/opt/openblas/include \
+    -L/opt/homebrew/opt/openblas/lib \
+    -o train src/*.c -lopenblas -lm
 
-- IMLPEMENT BATCH
-- IMPLEMENET TEST each x epochs
-
+- faster matmul using BLAS then 4 loops: for m and n <= 10/20 4 loops are faster for 40/50 >= BLAS but check better
 - this scode in not scalable 
 - not a lot of cores means faster traning for example on V=16000 and h=512 is better 4 cores then 8 because with parmters paralell there is a lot of communicaoont among process 
 - write amdhal lawa and otehrs stuff and in report copy some parts from paper and link report in github
+
+TO DO:
+- testing part
+- understand if working correctly training (I DONT WANT TO DO FULL TRAIN JUST UNDERSTAND IF ITS A CODE FRO TRAIN)
+- doing graph: speedup, scalability and efficeny for diffreent problem size and for process: 1 2 4 8 (doing 1 2 4 8 16 32 64 on aws ...)
+
+- HOW MUCH OF THIS CODE IS PARALLELIZABLE?:
+- get chunk: x
+- first layer: x
+- second layer: y
+- softmax/normalize: y
+- clear grad: x
+- backward i-th block: y
+- hidden layer w: x
+- feature vectors: x
+
+9 block of code -> 3 parallelizlbe so 9 / 3 = 3 -> 33.3% of code is parallelizible

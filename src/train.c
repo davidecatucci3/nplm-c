@@ -10,99 +10,7 @@
 // external files
 #include "embedding_matrix.h"
 #include "get_data.h"
-
-// sample generator
-void generate_tokens(int rank, int max_tokens, int n, int m, int h, int V, Vocab* vocab, double* C, double* H, double* d, double* U, double* b) {
-    int tokens[max_tokens]; // store generated tokens
-    int token_count = 0;
-
-    // initialize input tokens with zeros (empty space)
-    int ids[2] = {0, 0}; 
-
-    double* x = malloc(n*m * sizeof(double));
-    double* o = malloc(h * sizeof(double));
-    double* y = malloc(V * sizeof(double));
-    double* p = malloc(V * sizeof(double));
-
-    while (token_count < max_tokens) {
-        // build input embedding
-        for (int i = 0; i < n; i++) {
-            int id = ids[i];
-            for (int j = 0; j < m; j++) {
-                x[i*m + j] = C[id*m + j];
-            }
-        }
-
-        // hidden layer
-        cblas_dgemv(
-            CblasRowMajor, CblasNoTrans,
-            h, n*m,
-            1.0,
-            H, n*m,
-            x, 1,
-            0.0,
-            o, 1
-        );
-        for (int i = 0; i < h; i++) o[i] = tanh(o[i] + d[i]);
-
-        // output layer
-        cblas_dgemv(
-            CblasRowMajor, CblasNoTrans,
-            V, h,
-            1.0,
-            U, h,
-            o, 1,
-            0.0,
-            y, 1
-        );
-
-        for (int i = 0; i < V; i++) y[i] += b[i];
-
-        // softmax
-        double max_y = -INFINITY;
-        for (int i = 0; i < V; i++) if (y[i] > max_y) max_y = y[i];
-        double sum_exp = 0.0;
-
-        for (int i = 0; i < V; i++) {
-            p[i] = exp(y[i] - max_y);
-            sum_exp += p[i];
-        }
-
-        for (int i = 0; i < V; i++) p[i] /= sum_exp;
-
-        // sample next token
-        double r = ((double)rand() / RAND_MAX);
-        double cumulative = 0.0;
-        int next_id = 0;
-
-        for (int i = 0; i < V; i++) {
-            cumulative += p[i];
-
-            if (r < cumulative) {
-                next_id = i;
-
-                break;
-            }
-        }
-
-        tokens[token_count++] = next_id;
-
-        ids[0] = ids[1];
-        ids[1] = next_id;
-    }
-
-    // print generated tokens
-    printf("rank %d: ", rank);
-
-    for (int i = 0; i < token_count; i++) {
-        printf("%s ", vocab->words[tokens[i]]);
-    }
-
-    printf("\n");
-
-    // free memory
-    free(x); free(o); free(y); free(p);
-}
+#include "generate_tokens.h"
 
 int main() {
     // initialize MPI
@@ -123,7 +31,7 @@ int main() {
     build_vocab("data/brown.csv", &vocab);
 
     // hyperparameters
-    int epochs = 1000;     
+    int epochs = 500;     
     int V = 6408;         // vocab.size is 6402 but to use 8 cores and be divisible I need 6408
     int m = 64;           // embedding size
     int h = 32;           // hidde layer units
@@ -175,23 +83,17 @@ int main() {
         double start_time = MPI_Wtime(); // start timer to calculate time spent for one epoch
 
         while (1) {
-            // FORWARD PHASE
-            // perform forward computation for the word features layer  
-            if (rank == 0) {
-                get_chunk(&x1, &x2, &y);
-            }
+            // get sample of data
+            get_chunk(&x1, &x2, &y);
 
-            // broadcast the sample to all ranks so everyone has the same inputs
-            MPI_Bcast(&x1, 1, MPI_INT, 0, MPI_COMM_WORLD);
-            MPI_Bcast(&x2, 1, MPI_INT, 0, MPI_COMM_WORLD);
-            MPI_Bcast(&y,  1, MPI_INT, 0, MPI_COMM_WORLD);
-            
-            if (x1 == -1) break;                // end of file
-            if (count == 10000) break;     // break
+            //if (x1 == -1) break;        // all samples in train data per epoch
+            if (count == 1000) break;     // 1000 samples per epoch
 
             int ids[2] = {x1, x2};
             int next_id = y;
 
+            // FORWARD PHASE
+            // perform forward computation for the word features layer  
             for (int i = 0; i < n; i++) {
                 int id = ids[i];
                 
@@ -199,7 +101,7 @@ int main() {
                     x[i * m + j] = C[id * m + j];  
                 }
             }
-
+            
             // perform forward computation for the hidden layer
             cblas_dgemv( // BLAS faster matrix mul
                 CblasRowMajor,    
