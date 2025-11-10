@@ -1,0 +1,231 @@
+// built-in files
+#include <stdbool.h>
+#include <stdlib.h>
+#include <cblas.h>
+#include <stdio.h>
+#include <math.h>
+#include <time.h>
+
+// external files
+#include "embedding_matrix.h"
+#include "get_data.h"
+
+// sample generator
+void generate_tokens(int max_tokens, int n, int m, int h, int V, Vocab* vocab, double* C, double* H, double* d, double* U, double* b) {
+    int tokens[max_tokens]; // store generated tokens
+    int token_count = 0;
+
+    int ids[2] = {0, 0}; 
+
+    double* x = malloc(n*m * sizeof(double));
+    double* o = malloc(h * sizeof(double));
+    double* y = malloc(V * sizeof(double));
+    double* p = malloc(V * sizeof(double));
+
+    while (token_count < max_tokens) {
+        // build input embedding
+        for (int i = 0; i < n; i++) {
+            int id = ids[i];
+            for (int j = 0; j < m; j++) {
+                x[i*m + j] = C[id*m + j];
+            }
+        }
+
+        // hidden layer
+        cblas_dgemv(CblasRowMajor, CblasNoTrans, h, n*m, 1.0, H, n*m, x, 1, 0.0, o, 1);
+        for (int i = 0; i < h; i++) o[i] = tanh(o[i] + d[i]);
+
+        // output layer
+        cblas_dgemv(CblasRowMajor, CblasNoTrans, V, h, 1.0, U, h, o, 1, 0.0, y, 1);
+        for (int i = 0; i < V; i++) y[i] += b[i];
+
+        // softmax
+        double max_y = -INFINITY;
+        for (int i = 0; i < V; i++) if (y[i] > max_y) max_y = y[i];
+        double sum_exp = 0.0;
+        for (int i = 0; i < V; i++) {
+            p[i] = exp(y[i] - max_y);
+            sum_exp += p[i];
+        }
+        for (int i = 0; i < V; i++) p[i] /= sum_exp;
+
+        // sample next token
+        double r = ((double)rand() / RAND_MAX);
+        double cumulative = 0.0;
+        int next_id = 0;
+        for (int i = 0; i < V; i++) {
+            cumulative += p[i];
+            if (r < cumulative) {
+                next_id = i;
+                break;
+            }
+        }
+
+        tokens[token_count++] = next_id;
+        ids[0] = ids[1];
+        ids[1] = next_id;
+    }
+
+    printf("Generated tokens: ");
+    for (int i = 0; i < token_count; i++) {
+        printf("%s ", vocab->words[tokens[i]]);
+    }
+    printf("\n");
+
+    free(x); free(o); free(y); free(p);
+}
+
+int main() {
+    srand(time(NULL));
+
+    // create vocabulary
+    Vocab vocab;
+    init_vocab(&vocab);
+    build_vocab("data/brown.csv", &vocab);
+
+    // hyperparameters
+    int epochs = 1000;     
+    int V = 6408;         
+    int m = 256;           
+    int h = 128;           
+    int n = 2;            
+    double lr = 1e-3;     
+    double r = 1e-8;      
+    double wd = 1e-4;     
+
+    // parameters
+    double* C = embedding_matrix(V, m);       
+    double* H = embedding_matrix(h, n*m);    
+    double* d = embedding_matrix(h, 1);      
+    double* U = embedding_matrix(V, h);      
+    double* b = embedding_matrix(V, 1);      
+
+    // other variables
+    double* x = malloc(n*m * sizeof(double));
+    double* o = malloc(h * sizeof(double));
+    double* y = malloc(V * sizeof(double));
+    double* p = malloc(V * sizeof(double));
+
+    double* gradient_Lx = malloc(n*m * sizeof(double));
+    double* gradient_La = malloc(h * sizeof(double));
+    double* local_gradient_Lo = malloc(h * sizeof(double));
+    double* local_gradient_Ly = malloc(V * sizeof(double));
+
+    double t = 0;
+
+    // training loop
+    for (int epoch = 0; epoch < epochs; epoch++) {
+        int x1, x2, y_true;
+        int count = 0;
+        double loss_sum = 0.0;
+
+        reset_get_chunk();
+
+        clock_t start_time = clock();
+
+        while (1) {
+            get_chunk(&x1, &x2, &y_true);
+            if (x1 == -1) break;
+            if (count == 1000) break;
+
+            int ids[2] = {x1, x2};
+
+            // forward pass
+            for (int i = 0; i < n; i++) {
+                int id = ids[i];
+                for (int j = 0; j < m; j++) {
+                    x[i*m + j] = C[id*m + j];
+                }
+            }
+
+            cblas_dgemv(CblasRowMajor, CblasNoTrans, h, n*m, 1.0, H, n*m, x, 1, 0.0, o, 1);
+            for (int i = 0; i < h; i++) o[i] = tanh(o[i] + d[i]);
+
+            cblas_dgemv(CblasRowMajor, CblasNoTrans, V, h, 1.0, U, h, o, 1, 0.0, y, 1);
+            for (int i = 0; i < V; i++) y[i] += b[i];
+
+            double max_y = -INFINITY;
+            for (int i = 0; i < V; i++) if (y[i] > max_y) max_y = y[i];
+
+            double sum_exp = 0.0;
+            for (int i = 0; i < V; i++) {
+                p[i] = exp(y[i] - max_y);
+                sum_exp += p[i];
+            }
+            for (int i = 0; i < V; i++) p[i] /= sum_exp;
+
+            double ll = log(p[y_true] + 1e-12);
+            loss_sum += ll;
+            count++;
+
+            // backward pass
+            for (int i = 0; i < V; i++) {
+                local_gradient_Ly[i] = -p[i];
+            }
+            local_gradient_Ly[y_true] += 1.0;
+
+            for (int k = 0; k < h; k++) {
+                gradient_La[k] = 0.0;
+            }
+
+            for (int i = 0; i < V; i++) {
+                b[i] += lr * local_gradient_Ly[i];
+                for (int k = 0; k < h; k++) {
+                    gradient_La[k] += local_gradient_Ly[i] * U[i*h + k];
+                    U[i*h + k] += lr * local_gradient_Ly[i] * o[k];
+                }
+            }
+
+            for (int k = 0; k < h; k++) {
+                local_gradient_Lo[k] = (1.0 - o[k]*o[k]) * gradient_La[k];
+            }
+
+            for (int i = 0; i < n*m; i++) gradient_Lx[i] = 0.0;
+            for (int i = 0; i < n*m; i++) {
+                for (int k = 0; k < h; k++) {
+                    gradient_Lx[i] += H[k*n*m + i] * local_gradient_Lo[k];
+                }
+            }
+
+            for (int k = 0; k < h; k++) {
+                d[k] += lr * local_gradient_Lo[k];
+                for (int i = 0; i < n*m; i++) {
+                    H[k*n*m + i] += lr * local_gradient_Lo[k] * x[i];
+                }
+            }
+
+            for (int k = 0; k < n; k++) {
+                int word_id = ids[k];
+                for (int j = 0; j < m; j++) {
+                    C[word_id*m + j] += lr * gradient_Lx[k*m + j];
+                }
+            }
+
+            // weight decay
+            for (int i = 0; i < V*m; i++) C[i] *= (1.0 - lr*wd);
+            for (int i = 0; i < h*n*m; i++) H[i] *= (1.0 - lr*wd);
+            for (int i = 0; i < V*h; i++) U[i] *= (1.0 - lr*wd);
+
+            lr = lr / (1.0 + r * t);
+        }
+
+        t += 1.0;
+
+        clock_t end_time = clock();
+        double epoch_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+
+        double avg_ll = loss_sum / count;
+        printf("Epoch %d | train loss = %.6f | lr = %.6e | dt = %.3f \n", epoch, avg_ll, lr, epoch_time);
+
+        if (epoch % 50 == 0) {
+            generate_tokens(30, n, m, h, V, &vocab, C, H, d, U, b);
+        }
+    }
+
+    // free memory
+    free(C); free(H); free(d); free(U); free(b);
+    free(x); free(o); free(y); free(p);
+    free(gradient_Lx); free(gradient_La); free(local_gradient_Lo); free(local_gradient_Ly);
+
+    return 0;
+}
