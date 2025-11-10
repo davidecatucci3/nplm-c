@@ -261,16 +261,16 @@ int main() {
             printf("Epoch %d | train loss = %.6f | lr = %.6e | dt = %.3f \n", epoch, avg_ll, lr, epoch_time);
         } 
 
+        double* tx = malloc(n*m * sizeof(double));
+        double* to = malloc(h * sizeof(double));                    
+        double* tlocal_y = malloc(block_size * sizeof(double));     
+        double* tlocal_p = malloc(block_size * sizeof(double)); 
+
         // each 25 epochs test
         if (epoch % 25 == 0) {
             int tx1, tx2, ty;           // two inputs (x1 and x2) and a third value to predict (y)                 
             int tcount = 0;             // count samples (chunks) elaborated
-            double tloss_sum = 0.0;     // sum loss for each sample
-
-            double* tx = malloc(n*m * sizeof(double));
-            double* to = malloc(h * sizeof(double));                    
-            double* tlocal_y = malloc(block_size * sizeof(double));     
-            double* tlocal_p = malloc(block_size * sizeof(double));    
+            double tloss_sum = 0.0;     // sum loss for each sample   
             
             double tstart_time = MPI_Wtime(); // start timer to calculate time spent for one epoch
 
@@ -290,7 +290,7 @@ int main() {
                     int tid = tids[i];
                     
                     for (int j = 0; j < m; j++) {
-                        x[i * m + j] = C[tid * m + j];  
+                        tx[i * m + j] = C[tid * m + j];  
                     }
                 }
                 
@@ -391,6 +391,9 @@ int main() {
         if (epoch % 50 == 0) {
             generate_tokens(rank, 30, n, m, h, V, &vocab, C, H, d, U, b);
         }
+
+        // free up memory
+        free(tx); free(to); free(tlocal_y); free(tlocal_p);
     }
 
     // free memory
