@@ -31,7 +31,8 @@ int main() {
     build_vocab("data/brown.csv", &vocab);
 
     // hyperparameters
-    int epochs = 500;     
+    int epochs = 500;   
+    int B = 64;           // batch size  
     int V = 6408;         // vocab.size is 6402 but to use 8 cores and be divisible I need 6408
     int m = 64;           // embedding size
     int h = 32;           // hidde layer units
@@ -81,7 +82,7 @@ int main() {
         reset_get_chunk();
         
         double start_time = MPI_Wtime(); // start timer to calculate time spent for one epoch
-
+ 
         while (1) {
             // get train sample of data
             get_chunk("data/train_ids.txt", &x1, &x2, &y);
@@ -306,7 +307,7 @@ int main() {
                 );
 
                 for (int i = 0; i < h; i++) {
-                    to[i] = tanh(o[i] + d[i]);
+                    to[i] = tanh(to[i] + d[i]);
                 }
 
                 // perform forward computation for output units in the i-th block
