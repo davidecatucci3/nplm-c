@@ -23,14 +23,14 @@ void reset_get_chunk(void) {
     eof_reached = 0;
 }
 
-void get_chunk(int *x1, int *x2, int *y) {
+void get_chunk(const char *filename, int *x1, int *x2, int *y) {
     if (eof_reached) {
         *x1 = *x2 = *y = -1;
         return;
     }
 
     if (fp == NULL) {
-        fp = fopen("data/train_ids.txt", "r");
+        fp = fopen(filename, "r");
         if (!fp) {
             perror("fopen");
             *x1 = *x2 = *y = -1;

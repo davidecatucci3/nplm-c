@@ -83,8 +83,8 @@ int main() {
         double start_time = MPI_Wtime(); // start timer to calculate time spent for one epoch
 
         while (1) {
-            // get sample of data
-            get_chunk(&x1, &x2, &y);
+            // get train sample of data
+            get_chunk("data/train_ids.txt", &x1, &x2, &y);
 
             //if (x1 == -1) break;        // all samples in train data per epoch
             if (count == 1000) break;     // 1000 samples per epoch
@@ -262,7 +262,128 @@ int main() {
 
         // each 25 epochs test
         if (epoch % 25 == 0) {
-            printf("");
+            int tx1, tx2, ty;           // two inputs (x1 and x2) and a third value to predict (y)                 
+            int tcount = 0;             // count samples (chunks) elaborated
+            double tloss_sum = 0.0;     // sum loss for each sample
+
+            double* tx = malloc(n*m * sizeof(double));
+            double* to = malloc(h * sizeof(double));                    
+            double* tlocal_y = malloc(block_size * sizeof(double));     
+            double* tlocal_p = malloc(block_size * sizeof(double));    
+            
+            double tstart_time = MPI_Wtime(); // start timer to calculate time spent for one epoch
+
+            while (1) {
+                // get test sample of data
+                get_chunk("data/test_ids.txt", &tx1, &tx2, &ty);
+
+                //if (tx1 == -1) break;        // all samples in train data per epoch
+                if (tcount == 1000) break;     // 1000 samples per epoch
+
+                int tids[2] = {tx1, tx2};
+                int tnext_id = ty;
+
+                // FORWARD PHASE
+                // perform forward computation for the word features layer  
+                for (int i = 0; i < n; i++) {
+                    int tid = tids[i];
+                    
+                    for (int j = 0; j < m; j++) {
+                        x[i * m + j] = C[tid * m + j];  
+                    }
+                }
+                
+                // perform forward computation for the hidden layer
+                cblas_dgemv( // BLAS faster matrix mul
+                    CblasRowMajor,    
+                    CblasNoTrans,    
+                    h, n*m,
+                    1.0,
+                    H, n*m,                    
+                    tx, 1,         
+                    0.0,
+                    to, 1               
+                );
+
+                for (int i = 0; i < h; i++) {
+                    to[i] = tanh(o[i] + d[i]);
+                }
+
+                // perform forward computation for output units in the i-th block
+                double tS = 0.0;                                  // total sum of exponential for softmax
+                double tlocal_s = 0.0;                            // local exponential for softmax
+                double* tlocal_U = U + rank * block_size * h;     // take a block of U for parallelize it over all ranks
+                double* tlocal_b = b + rank * block_size;         // take a block of b for parallelize it over all ranks
+
+                cblas_dgemv( // BLAS faster matrix mul
+                    CblasRowMajor,     
+                    CblasNoTrans,      
+                    block_size, h,
+                    1.0,
+                    tlocal_U, h,           
+                    to, 1,         
+                    0.0,
+                    tlocal_y, 1               
+                );
+
+                for (int i = 0; i < block_size; i++) {
+                    tlocal_y[i] += tlocal_b[i];
+                }
+
+                // softmax stability 
+                double tlocal_max = -INFINITY;
+                double tglobal_max = 0.0;
+
+                for (int i = 0; i < block_size; ++i) {
+                    if (tlocal_y[i] > tlocal_max) {
+                        tlocal_max = tlocal_y[i];
+                    }
+                }
+
+                MPI_Allreduce(&tlocal_max, &tglobal_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+                for (int i = 0; i < block_size; ++i) {
+                    tlocal_p[i] = exp(tlocal_y[i] - tglobal_max);
+
+                    tlocal_s += tlocal_p[i];
+                }
+
+                // compute and share S among the processors
+                MPI_Allreduce(&tlocal_s, &tS, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                
+                // normalize the probabilities
+                for (int i = 0; i < block_size; i++) {
+                    tlocal_p[i] /= tS;
+                }
+
+                // update log-likelihood, if wt falls in the block of CPU i > 0, then CPU i sends pwt to CPU 0. CPU 0 computes L = log(pwt) and keeps track of the total log-likelihood
+                int tlocal_start = rank * block_size;
+                int tlocal_end = tlocal_start + block_size;
+                double tprob_target = 0.0;
+
+                if (tnext_id >= tlocal_start && tnext_id < tlocal_end) {
+                    int tlocal_index = tnext_id - tlocal_start;
+
+                    tprob_target = tlocal_p[tlocal_index];
+                }
+                
+                MPI_Allreduce(MPI_IN_PLACE, &tprob_target, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                
+                double tll = log(tprob_target + 1e-12); // log-likelihood
+
+                tloss_sum += tll;
+                tcount += 1;
+            }
+
+            // important at each epoch
+            double tend_time = MPI_Wtime(); // end timer to calculate time spent for one epoch
+            double tepoch_time = tend_time - tstart_time;
+        
+            if (rank == 0) {
+                double tavg_ll = (tloss_sum / tcount); // avergae loss among all samples
+
+                printf("Epoch %d | test loss = %.6f | lr = %.6e | dt = %.3f \n", epoch, tavg_ll, lr, epoch_time);
+            } 
         }
 
         // each 50 epochs generate tokens
