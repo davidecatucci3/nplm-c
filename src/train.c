@@ -59,12 +59,13 @@ int main() {
     double* U = embedding_matrix(V, h);       // weights second layer
     double* b = embedding_matrix(V, 1);       // bias second layer
 
-    // other variables
+    //input and output variables
     double* x = malloc(n*m * sizeof(double));                  // input vector neural network (flattened)
     double* o = malloc(h * sizeof(double));                    // output vector first layer
     double* local_y = malloc(block_size * sizeof(double));     // output second layer logits (each rank has its own block and it's parallelized, when is local that's the meaning)
     double* local_p = malloc(block_size * sizeof(double));     // output second layer probs
 
+    // gradients matrix
     double* local_gradient_Ly = malloc(block_size * sizeof(double));     
     double* local_gradient_La = malloc(h * sizeof(double));
     double* local_gradient_Lo = malloc(h * sizeof(double));
