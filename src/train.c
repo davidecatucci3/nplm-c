@@ -10,7 +10,7 @@
 // external files
 #include "embedding_matrix.h"
 #include "get_data.h"
-#include "generate_tokens.h"
+#include "generate_tokens.h" 
 
 int main() {
     // initialize MPI
@@ -25,7 +25,7 @@ int main() {
     srand(time(NULL) + rank);
 
     // create vocabulary
-    Vocab vocab;
+    Vocab vocab;    
 
     init_vocab(&vocab);
     build_vocab("data/brown.csv", &vocab);
@@ -74,8 +74,7 @@ int main() {
     double t = 0; // used for learning rate decay
 
     // traininig loop
-    for (int epoch = 0; epoch < epochs; epoch++) {
-        int x1, x2, y;             // two inputs (x1 and x2) and a third value to predict (y)                 
+    for (int epoch = 0; epoch < epochs; epoch++) {               
         int count = 0;             // count samples (chunks) elaborated
         double loss_sum = 0.0;     // sum loss for each sample
         
@@ -84,106 +83,113 @@ int main() {
         double start_time = MPI_Wtime(); // start timer to calculate time spent for one epoch
  
         while (1) {
-            // get train sample of data
-            get_chunk("data/train_ids.txt", &x1, &x2, &y);
+            int x1, x2, y;             
+            int batch_count = 0;
+            double batch_loss_sum = 0;
 
-            //if (x1 == -1) break;        // all samples in train data per epoch
-            if (count == 1000) break;     // 1000 samples per epoch
+            // batch
+            for (int b = 0; b < B; b++) {
+                // get train sample of data
+                get_chunk("data/train_ids.txt", &x1, &x2, &y);
 
-            int ids[2] = {x1, x2};
-            int next_id = y;
+                int ids[2] = {x1, x2};
+                int next_id = y;
 
-            // FORWARD PHASE
-            // perform forward computation for the word features layer  
-            for (int i = 0; i < n; i++) {
-                int id = ids[i];
+                // FORWARD PHASE
+                // perform forward computation for the word features layer  
+                for (int i = 0; i < n; i++) {
+                    int id = ids[i];
+                    
+                    for (int j = 0; j < m; j++) {
+                        x[i * m + j] = C[id * m + j];  
+                    }
+                }
                 
-                for (int j = 0; j < m; j++) {
-                    x[i * m + j] = C[id * m + j];  
+                // perform forward computation for the hidden layer
+                cblas_dgemv( // BLAS faster matrix mul
+                    CblasRowMajor,    
+                    CblasNoTrans,    
+                    h, n*m,
+                    1.0,
+                    H, n*m,                    
+                    x, 1,         
+                    0.0,
+                    o, 1               
+                );
+
+                for (int i = 0; i < h; i++) {
+                    o[i] = tanh(o[i] + d[i]);
                 }
-            }
-            
-            // perform forward computation for the hidden layer
-            cblas_dgemv( // BLAS faster matrix mul
-                CblasRowMajor,    
-                CblasNoTrans,    
-                h, n*m,
-                1.0,
-                H, n*m,                    
-                x, 1,         
-                0.0,
-                o, 1               
-            );
 
-            for (int i = 0; i < h; i++) {
-                o[i] = tanh(o[i] + d[i]);
-            }
+                // perform forward computation for output units in the i-th block
+                double S = 0.0;                                  // total sum of exponential for softmax
+                double local_s = 0.0;                            // local exponential for softmax
+                double* local_U = U + rank * block_size * h;     // take a block of U for parallelize it over all ranks
+                double* local_b = b + rank * block_size;         // take a block of b for parallelize it over all ranks
 
-            // perform forward computation for output units in the i-th block
-            double S = 0.0;                                  // total sum of exponential for softmax
-            double local_s = 0.0;                            // local exponential for softmax
-            double* local_U = U + rank * block_size * h;     // take a block of U for parallelize it over all ranks
-            double* local_b = b + rank * block_size;         // take a block of b for parallelize it over all ranks
+                cblas_dgemv( // BLAS faster matrix mul
+                    CblasRowMajor,     
+                    CblasNoTrans,      
+                    block_size, h,
+                    1.0,
+                    local_U, h,           
+                    o, 1,         
+                    0.0,
+                    local_y, 1               
+                );
 
-            cblas_dgemv( // BLAS faster matrix mul
-                CblasRowMajor,     
-                CblasNoTrans,      
-                block_size, h,
-                1.0,
-                local_U, h,           
-                o, 1,         
-                0.0,
-                local_y, 1               
-            );
-
-            for (int i = 0; i < block_size; i++) {
-                local_y[i] += local_b[i];
-            }
-
-            // softmax stability 
-            double local_max = -INFINITY;
-            double global_max = 0.0;
-
-            for (int i = 0; i < block_size; ++i) {
-                if (local_y[i] > local_max) {
-                    local_max = local_y[i];
+                for (int i = 0; i < block_size; i++) {
+                    local_y[i] += local_b[i];
                 }
+
+                // softmax stability 
+                double local_max = -INFINITY;
+                double global_max = 0.0;
+
+                for (int i = 0; i < block_size; ++i) {
+                    if (local_y[i] > local_max) {
+                        local_max = local_y[i];
+                    }
+                }
+
+                MPI_Allreduce(&local_max, &global_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+                for (int i = 0; i < block_size; ++i) {
+                    local_p[i] = exp(local_y[i] - global_max);
+
+                    local_s += local_p[i];
+                }
+
+                // compute and share S among the processors
+                MPI_Allreduce(&local_s, &S, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                
+                // normalize the probabilities
+                for (int i = 0; i < block_size; i++) {
+                    local_p[i] /= S;
+                }
+
+                // update log-likelihood, if wt falls in the block of CPU i > 0, then CPU i sends pwt to CPU 0. CPU 0 computes L = log(pwt) and keeps track of the total log-likelihood
+                int local_start = rank * block_size;
+                int local_end = local_start + block_size;
+                double prob_target = 0.0;
+
+                if (next_id >= local_start && next_id < local_end) {
+                    int local_index = next_id - local_start;
+
+                    prob_target = local_p[local_index];
+                }
+                
+                MPI_Allreduce(MPI_IN_PLACE, &prob_target, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                
+                double ll = log(prob_target + 1e-12); // log-likelihood
+
+                batch_loss_sum += ll;
+                batch_count += 1;
             }
 
-            MPI_Allreduce(&local_max, &global_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            loss_sum += batch_loss_sum;
+            count += batch_count;
 
-            for (int i = 0; i < block_size; ++i) {
-                local_p[i] = exp(local_y[i] - global_max);
-
-                local_s += local_p[i];
-            }
-
-            // compute and share S among the processors
-            MPI_Allreduce(&local_s, &S, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-            
-            // normalize the probabilities
-            for (int i = 0; i < block_size; i++) {
-                local_p[i] /= S;
-            }
-
-            // update log-likelihood, if wt falls in the block of CPU i > 0, then CPU i sends pwt to CPU 0. CPU 0 computes L = log(pwt) and keeps track of the total log-likelihood
-            int local_start = rank * block_size;
-            int local_end = local_start + block_size;
-            double prob_target = 0.0;
-
-            if (next_id >= local_start && next_id < local_end) {
-                int local_index = next_id - local_start;
-
-                prob_target = local_p[local_index];
-            }
-            
-            MPI_Allreduce(MPI_IN_PLACE, &prob_target, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-            
-            double ll = log(prob_target + 1e-12); // log-likelihood
-
-            loss_sum += ll;
-            count += 1;
-            
             // BACKWARD PHASE         
             // perform backward gradient for output units in i-th block
             for (int i = 0; i < h; i++) {
