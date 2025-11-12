@@ -2,13 +2,12 @@
 #include <cblas.h>
 #include <stdio.h>
 #include <math.h>
-#include <time.h>
 #include <mpi.h>
 
 // external files
 #include "embedding_matrix.h"
 
-int forward_phase(int rank, int block_size, int n, int m, int h, int ids, double* C, double* H, double* x, double *o, double *local_y, double* U, double* b) {
+void forward_phase(int rank, int block_size, int n, int m, int h, int* ids, double* C, double* H, double* d, double* local_p, double* x, double *o, double *local_y, double* U, double* b, double* local_U, double* local_b) {
     // FORWARD PHASE
     // perform forward computation for the word features layer  
     for (int i = 0; i < n; i++) {
@@ -36,10 +35,10 @@ int forward_phase(int rank, int block_size, int n, int m, int h, int ids, double
     }
 
     // perform forward computation for output units in the i-th block
-    double S = 0.0;                                  // total sum of exponential for softmax
-    double local_s = 0.0;                            // local exponential for softmax
-    double* local_U = U + rank * block_size * h;     // take a block of U for parallelize it over all ranks
-    double* local_b = b + rank * block_size;         // take a block of b for parallelize it over all ranks
+    double S = 0.0;                          // total sum of exponential for softmax
+    double local_s = 0.0;                    // local exponential for softmax
+    local_U = U + rank * block_size * h;     // take a block of U for parallelize it over all ranks
+    local_b = b + rank * block_size;         // take a block of b for parallelize it over all ranks
 
     cblas_dgemv( // BLAS faster matrix mul
         CblasRowMajor,     

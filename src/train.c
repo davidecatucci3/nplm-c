@@ -11,6 +11,8 @@
 #include "embedding_matrix.h"
 #include "get_data.h"
 #include "generate_tokens.h"
+#include "forward_phase.h"
+#include "backward_phase.h"
 
 int main() {
     // initialize MPI
@@ -58,6 +60,8 @@ int main() {
     double* d = embedding_matrix(h, 1);       // bias first layer
     double* U = embedding_matrix(V, h);       // weights second layer
     double* b = embedding_matrix(V, 1);       // bias second layer
+    double* local_U = NULL;    
+    double* local_b = NULL;   
 
     //input and output variables
     double* x = malloc(n*m * sizeof(double));                  // input vector neural network (flattened)
@@ -93,8 +97,9 @@ int main() {
 
             int ids[2] = {x1, x2};
             int next_id = y;
-
-            forward_phase();
+            
+            // FORWARD PHASE
+            forward_phase(rank, block_size, n, m, h, ids, C, H, d, local_p, x, o, local_y, U, b, local_U, local_b);
 
             // update log-likelihood, if wt falls in the block of CPU i > 0, then CPU i sends pwt to CPU 0. CPU 0 computes L = log(pwt) and keeps track of the total log-likelihood
             int local_start = rank * block_size;
@@ -115,73 +120,15 @@ int main() {
             count += 1;
             
             // BACKWARD PHASE         
-            // perform backward gradient for output units in i-th block
-            for (int i = 0; i < h; i++) {
-                local_gradient_La[i] = 0.0;
-            }
+            backward_phase(rank, ids, next_id, block_size, m, n, h, V, lr, wd, local_gradient_La, local_gradient_Lo, C, x, H, o, d, local_U, local_gradient_Ly, gradient_Lx, gradient_La, local_b, local_p);
 
-            for (int i = 0; i < n*m; ++i) {
-                gradient_Lx[i] = 0.0;
-            }
-            
-            for (int i = 0; i < block_size; i++) {
-                if (i + rank*(V/comm_sz) == next_id) {
-                    local_gradient_Ly[i] = 1 - local_p[i];
-                } else {
-                    local_gradient_Ly[i] = -local_p[i];
-                }
-
-                local_b[i] += lr*local_gradient_Ly[i];
-
-                for (int j = 0; j < h; j++) {            
-                    local_gradient_La[j] += local_gradient_Ly[i] * local_U[i*h + j];
-            
-                    local_U[i * h + j] += lr * local_gradient_Ly[i] * o[j];
-                }
-            }
-            
-            // share dL/da among all processors
-            MPI_Allreduce(local_gradient_La, gradient_La, h, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-            
-            // backpropagate through and update hidden layer weights
-            for (int k = 0; k < h; k++) {
-                local_gradient_Lo[k] = (1.0 - o[k] * o[k]) * gradient_La[k];
-            }
-
-            for (int i = 0; i < m*n; i++) {
-                for (int k = 0; k < h; k++) {
-                    gradient_Lx[i] += H[k * m*n + i] * local_gradient_Lo[k];
-                }
-            }
-
-            for (int k = 0; k < h; k++) {
-                d[k] += lr * local_gradient_Lo[k];
-
-                for (int i = 0; i < m*n; i++) {
-                    H[k * m*n + i] += lr * local_gradient_Lo[k] * x[i];
-                }
-            }
-            
-            // update word feature vectors for the input words: loop over k between 1 and n
-            for (int k = 0; k < n; k++) {
-                int word_id = ids[k]; 
-
-                for (int j = 0; j < m; j++) {
-                    C[word_id * m + j] += lr * gradient_Lx[k * m + j];
-                }
-            }
-
-            // weight decay regularization
-            for (int i = 0; i < V*m; ++i) C[i] *= (1.0 - lr * wd);
-            for (int i = 0; i < h*n*m; ++i) H[i] *= (1.0 - lr * wd);
-            for (int i = 0; i < block_size*h; ++i) local_U[i] *= (1.0 - lr * wd);
-            
+            // update learning rate
             lr = lr / (1.0 + r * t);
         }
 
         t += 1.0;
 
-        // important at each epoch
+        // important data at each epoch
         double end_time = MPI_Wtime(); // end timer to calculate time spent for one epoch
         double epoch_time = end_time - start_time;
     
