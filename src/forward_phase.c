@@ -33,7 +33,7 @@ void forward_phase(int rank, int block_size, int n, int m, int h, int* ids, doub
     for (int i = 0; i < h; i++) {
         o[i] = tanh(o[i] + d[i]);
     }
-
+    
     // perform forward computation for output units in the i-th block
     double S = 0.0;                          // total sum of exponential for softmax
     double local_s = 0.0;                    // local exponential for softmax

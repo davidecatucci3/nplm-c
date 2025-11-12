@@ -60,8 +60,8 @@ int main() {
     double* d = embedding_matrix(h, 1);       // bias first layer
     double* U = embedding_matrix(V, h);       // weights second layer
     double* b = embedding_matrix(V, 1);       // bias second layer
-    double* local_U = NULL;    
-    double* local_b = NULL;   
+    double* local_U = malloc(block_size*h * sizeof(double));   
+    double* local_b = malloc(block_size * sizeof(double));
 
     //input and output variables
     double* x = malloc(n*m * sizeof(double));                  // input vector neural network (flattened)
@@ -77,7 +77,7 @@ int main() {
     double* gradient_Lx = malloc(n * m * sizeof(double));
 
     double t = 0; // used for learning rate decay
-
+    
     // traininig loop
     for (int epoch = 0; epoch < epochs; epoch++) {
         int x1, x2, y;             // two inputs (x1 and x2) and a third value to predict (y)                 
