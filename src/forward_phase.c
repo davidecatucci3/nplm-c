@@ -8,7 +8,6 @@
 #include "embedding_matrix.h"
 
 void forward_phase(int rank, int block_size, int n, int m, int h, int* ids, double* C, double* H, double* d, double* local_p, double* x, double *o, double *local_y, double* U, double* b, double* local_U, double* local_b) {
-    // FORWARD PHASE
     // perform forward computation for the word features layer  
     for (int i = 0; i < n; i++) {
         int id = ids[i];
