@@ -55,13 +55,13 @@ int main() {
     int block_size = V / comm_sz; // each local parameters has this number of rows (rows per rank)
 
     // parameters
-    double* C = embedding_matrix(V, m);       // embedding weights
-    double* H = embedding_matrix(h, n*m);     // weights first layer
-    double* d = embedding_matrix(h, 1);       // bias first layer
-    double* U = embedding_matrix(V, h);       // weights second layer
-    double* b = embedding_matrix(V, 1);       // bias second layer
-    double* local_U = malloc(block_size*h * sizeof(double));   
-    double* local_b = malloc(block_size * sizeof(double));
+    double* C = embedding_matrix(V, m);              // embedding weights
+    double* H = embedding_matrix(h, n*m);            // weights first layer
+    double* d = embedding_matrix(h, 1);              // bias first layer
+    double* U = embedding_matrix(V, h);              // weights second layer
+    double* b = embedding_matrix(V, 1);              // bias second layer
+    double* local_U = U + rank * block_size * h;     // take a block of U for parallelize it over all ranks
+    double* local_b = b + rank * block_size;         // take a block of b for parallelize it over all ranks
 
     //input and output variables
     double* x = malloc(n*m * sizeof(double));                  // input vector neural network (flattened)

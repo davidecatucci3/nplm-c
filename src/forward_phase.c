@@ -37,8 +37,6 @@ void forward_phase(int rank, int block_size, int n, int m, int h, int* ids, doub
     // perform forward computation for output units in the i-th block
     double S = 0.0;                          // total sum of exponential for softmax
     double local_s = 0.0;                    // local exponential for softmax
-    local_U = U + rank * block_size * h;     // take a block of U for parallelize it over all ranks
-    local_b = b + rank * block_size;         // take a block of b for parallelize it over all ranks
 
     cblas_dgemv( // BLAS faster matrix mul
         CblasRowMajor,     
