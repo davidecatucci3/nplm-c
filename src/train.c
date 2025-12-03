@@ -33,8 +33,7 @@ int main() {
     build_vocab("data/brown.csv", &vocab);
 
     // hyperparameters
-    int epochs = 500;   
-    int B = 64;           // batch size  
+    int epochs = 10;    
     int V = 6408;         // vocab.size is 6402 but to use 8 cores and be divisible I need 6408
     int m = 64;           // embedding size
     int h = 32;           // hidde layer units
