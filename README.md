@@ -50,6 +50,8 @@ mpirun -n <number_of_processes> ./train
 
 **Example:** Run with 8 processes:
 
+Due to overhead (frequently all_reduce operations) using an high number of process is not faster
+
 ```bash
 mpirun -n 8 ./train
 ```
