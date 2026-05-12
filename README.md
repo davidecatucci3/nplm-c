@@ -1,4 +1,4 @@
-# nplm-redux
+# nplm-c
 
 A Neural Probabilistic Language Model (NPLM) implementation in C, designed for high performance and parallelized training using MPI (Message Passing Interface).
 
